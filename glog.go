@@ -1020,19 +1020,19 @@ func (v Verbose) Infof(format string, args ...interface{}) {
 	}
 }
 
-// Info logs to the INFO log.
+// Info logs informational messages.
 // Arguments are handled in the manner of fmt.Print; a newline is appended if missing.
 func Info(args ...interface{}) {
 	logging.print(infoLog, args...)
 }
 
 // InfoDepth acts as Info but uses depth to determine which call frame to log.
-// InfoDepth(0, "msg") is the same as Info("msg").
+// InfoDepth(0, "msg") is the same as Info("msg"). Use when wrapping Info()
 func InfoDepth(depth int, args ...interface{}) {
 	logging.printDepth(infoLog, depth, args...)
 }
 
-// Infof logs to the INFO log.
+// Infof logs informational messages.
 // Arguments are handled in the manner of fmt.Printf; a newline is appended if missing.
 func Infof(format string, args ...interface{}) {
 	logging.printf(infoLog, format, args...)
@@ -1053,33 +1053,35 @@ func Error(args ...interface{}) {
 }
 
 // ErrorDepth acts as Error but uses depth to determine which call frame to log.
-// ErrorDepth(0, "msg") is the same as Error("msg").
+// ErrorDepth(0, "msg") is the same as Error("msg"). Use when wrapping Error()
 func ErrorDepth(depth int, args ...interface{}) {
 	logging.printDepth(errorLog, depth, args...)
 }
 
-// Errorf logs to the ERROR, WARNING, and INFO logs.
+// Errorf logs error messages.
 // Arguments are handled in the manner of fmt.Printf; a newline is appended if missing.
 func Errorf(format string, args ...interface{}) {
 	logging.printf(errorLog, format, args...)
 }
 
-// Fatal logs to the FATAL, ERROR, WARNING, and INFO logs,
+// Fatal logs fatal messages,
 // including a stack trace of all running goroutines, then calls os.Exit(255).
 // Arguments are handled in the manner of fmt.Print; a newline is appended if missing.
+// Think carefully before using Fatal, it is usually better to return an error to your caller.
 func Fatal(args ...interface{}) {
 	logging.print(fatalLog, args...)
 }
 
 // FatalDepth acts as Fatal but uses depth to determine which call frame to log.
-// FatalDepth(0, "msg") is the same as Fatal("msg").
+// FatalDepth(0, "msg") is the same as Fatal("msg"). Use when wrapping Fatal().
 func FatalDepth(depth int, args ...interface{}) {
 	logging.printDepth(fatalLog, depth, args...)
 }
 
-// Fatalf logs to the FATAL, ERROR, WARNING, and INFO logs,
+// Fatalf logs fatal messages,
 // including a stack trace of all running goroutines, then calls os.Exit(255).
 // Arguments are handled in the manner of fmt.Printf; a newline is appended if missing.
+// Think carefully before using Fatalf, it is usually better to return an error to your caller.
 func Fatalf(format string, args ...interface{}) {
 	logging.printf(fatalLog, format, args...)
 }
