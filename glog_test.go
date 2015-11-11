@@ -221,7 +221,7 @@ func TestError(t *testing.T) {
 func TestWarning(t *testing.T) {
 	setFlags()
 	defer logging.swap(logging.newBuffers())
-	Warning("test")
+	warning("test")
 	if !contains(warningLog, "W", t) {
 		t.Errorf("Warning has wrong character: %q", contents(warningLog))
 	}
