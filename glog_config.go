@@ -33,3 +33,18 @@ func init() {
 	logging.setVState(0, nil, false)
 	go logging.flushDaemon()
 }
+
+// SetVGlobal sets the global verbosity level.
+func SetVGlobal(level string) {
+	// This value doesn't matter, I just need something to call Set on
+	l := Level(0)
+	l.Set(level)
+}
+
+// SetVModule sets the per-module verbosity level.
+// Syntax: message=2,routing*=1
+func SetVModule(value string) error {
+	// This value doesn't matter, I just need something to call Set on
+	m := moduleSpec{}
+	return m.Set(value)
+}
