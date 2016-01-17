@@ -230,8 +230,8 @@ func (l *Level) Set(value string) error {
 		return err
 	}
 	logging.mu.Lock()
-	defer logging.mu.Unlock()
 	logging.setVState(Level(v), logging.vmodule.filter, false)
+	logging.mu.Unlock()
 	return nil
 }
 
@@ -259,16 +259,16 @@ func (m *modulePat) match(file string) bool {
 }
 
 func (m *moduleSpec) String() string {
+	var b bytes.Buffer
 	// Lock because the type is not atomic. TODO: clean this up.
 	logging.mu.Lock()
-	defer logging.mu.Unlock()
-	var b bytes.Buffer
 	for i, f := range m.filter {
 		if i > 0 {
 			b.WriteRune(',')
 		}
 		fmt.Fprintf(&b, "%s=%d", f.pattern, f.level)
 	}
+	logging.mu.Unlock()
 	return b.String()
 }
 
@@ -307,8 +307,8 @@ func (m *moduleSpec) Set(value string) error {
 		filter = append(filter, modulePat{pattern, isLiteral(pattern), Level(v)})
 	}
 	logging.mu.Lock()
-	defer logging.mu.Unlock()
 	logging.setVState(logging.verbosity, filter, true)
+	logging.mu.Unlock()
 	return nil
 }
 
@@ -346,8 +346,9 @@ func (t *traceLocation) match(file string, line int) bool {
 func (t *traceLocation) String() string {
 	// Lock because the type is not atomic. TODO: clean this up.
 	logging.mu.Lock()
-	defer logging.mu.Unlock()
-	return fmt.Sprintf("%s:%d", t.file, t.line)
+	s := fmt.Sprintf("%s:%d", t.file, t.line)
+	logging.mu.Unlock()
+	return s
 }
 
 // Get is part of the (Go 1.2) flag.Getter interface. It always returns nil for this flag type since the
@@ -382,9 +383,9 @@ func (t *traceLocation) Set(value string) error {
 		return errors.New("negative or zero value for level")
 	}
 	logging.mu.Lock()
-	defer logging.mu.Unlock()
 	t.line = v
 	t.file = file
+	logging.mu.Unlock()
 	return nil
 }
 
@@ -991,14 +992,15 @@ func V(level Level) Verbose {
 		// is shared so we must lock before accessing it. This is fairly expensive,
 		// but if V logging is enabled we're slow anyway.
 		logging.mu.Lock()
-		defer logging.mu.Unlock()
 		if runtime.Callers(2, logging.pcs[:]) == 0 {
+			logging.mu.Unlock()
 			return Verbose(false)
 		}
 		v, ok := logging.vmap[logging.pcs[0]]
 		if !ok {
 			v = logging.setV(logging.pcs[0])
 		}
+		logging.mu.Unlock()
 		return Verbose(v >= level)
 	}
 	return Verbose(false)
