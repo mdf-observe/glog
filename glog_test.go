@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"fmt"
 	stdLog "log"
+	"math"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -411,5 +412,27 @@ func BenchmarkHeader(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		buf, _, _ := logging.header(infoLog, 0)
 		logging.putBuffer(buf)
+	}
+}
+
+// TestRateLimit tests the rate limiter
+func TestRateLimit(t *testing.T) {
+	setFlags()
+	defer logging.swap(logging.newBuffers())
+	defaultRateLimiter := logging.rateLimiter
+	defer func() { logging.rateLimiter = defaultRateLimiter }()
+	SetRateLimit(time.Duration(math.MaxInt32)*time.Second, 1)
+	okLog := "look at me"
+	Info(okLog)
+	count := strings.Count(contents(infoLog), okLog)
+	if count != 1 {
+		t.Errorf("Saw %q %d times (expected 1): %s", okLog, count, contents(infoLog))
+	}
+	rateLimitedLog := "sorry"
+	Info(rateLimitedLog)
+	count = strings.Count(contents(infoLog), rateLimitedLog)
+	if count != 0 {
+		t.Errorf("Saw %q %d times (expected 0): %s", rateLimitedLog, count,
+			contents(infoLog))
 	}
 }

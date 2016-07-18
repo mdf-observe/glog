@@ -86,6 +86,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"golang.org/x/time/rate"
 )
 
 // severity identifies the sort of log: info, warning etc. It also implements
@@ -163,8 +165,9 @@ func severityByName(s string) (severity, bool) {
 
 // OutputStats tracks the number of output lines and bytes written.
 type OutputStats struct {
-	lines int64
-	bytes int64
+	lines            int64
+	bytes            int64
+	rateLimitedLines int64
 }
 
 // Lines returns the number of lines written.
@@ -175,6 +178,11 @@ func (s *OutputStats) Lines() int64 {
 // Bytes returns the number of bytes written.
 func (s *OutputStats) Bytes() int64 {
 	return atomic.LoadInt64(&s.bytes)
+}
+
+// RateLimitedLines returns the number of lines dropped due to rate limiting.
+func (s *OutputStats) RateLimitedLines() int64 {
+	return atomic.LoadInt64(&s.rateLimitedLines)
 }
 
 // Stats tracks the number of lines of output and number of bytes
@@ -437,8 +445,9 @@ type loggingT struct {
 	traceLocation traceLocation
 	// These flags are modified only under lock, although verbosity may be fetched
 	// safely using atomic.LoadInt32.
-	vmodule   moduleSpec // The state of the -vmodule flag.
-	verbosity Level      // V logging level, the value of the -v flag/
+	vmodule     moduleSpec    // The state of the -vmodule flag.
+	verbosity   Level         // V logging level, the value of the -v flag/
+	rateLimiter *rate.Limiter // Rate limiter
 }
 
 // buffer holds a byte Buffer for reuse. The zero value is ready for use.
@@ -650,6 +659,19 @@ func (l *loggingT) printWithFileLine(s severity, file string, line int, alsoToSt
 // output writes the data to the log files and releases the buffer.
 func (l *loggingT) output(s severity, buf *buffer, file string, line int, alsoToStderr bool) {
 	l.mu.Lock()
+	if l.rateLimiter != nil {
+		now := time.Now()
+		r := l.rateLimiter.ReserveN(now, 1)
+		if !r.OK() || r.DelayFrom(now) > 0 {
+			r.Cancel()
+			l.putBuffer(buf)
+			l.mu.Unlock()
+			if stats := severityStats[s]; stats != nil {
+				atomic.AddInt64(&stats.rateLimitedLines, 1)
+			}
+			return
+		}
+	}
 	if l.traceLocation.isSet() {
 		if l.traceLocation.match(file, line) {
 			buf.Write(stacks(false))
@@ -1091,3 +1113,19 @@ func Fatalf(format string, args ...interface{}) {
 // fatalNoStacks is non-zero if we are to exit without dumping goroutine stacks.
 // It allows Exit and relatives to use the Fatal logs.
 var fatalNoStacks uint32
+
+// GetRateLimit returns the seconds and burst size for the current rate limiter
+func GetRateLimit() (float64, int) {
+	logging.mu.Lock()
+	limit := logging.rateLimiter.Limit()
+	burst := logging.rateLimiter.Burst()
+	logging.mu.Unlock()
+	return float64(limit), burst
+}
+
+// SetRateLimit sets the rate limit in seconds and burst size
+func SetRateLimit(limit time.Duration, burst int) {
+	logging.mu.Lock()
+	logging.rateLimiter = rate.NewLimiter(rate.Every(limit), burst)
+	logging.mu.Unlock()
+}
