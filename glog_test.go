@@ -436,3 +436,20 @@ func TestRateLimit(t *testing.T) {
 			contents(infoLog))
 	}
 }
+
+// BenchmarkInfo benchmarks info logging
+func BenchmarkInfo(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		Info("test")
+	}
+}
+
+// BenchmarkInfo benchmarks info logging with rate limiting enabled but set to 0
+func BenchmarkInfoRateLimited(b *testing.B) {
+	defaultRateLimiter := logging.rateLimiter
+	defer func() { logging.rateLimiter = defaultRateLimiter }()
+	SetRateLimit(time.Duration(0)*time.Second, 1)
+	for i := 0; i < b.N; i++ {
+		Info("rate")
+	}
+}
