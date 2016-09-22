@@ -437,8 +437,32 @@ func TestRateLimit(t *testing.T) {
 	}
 }
 
+// discarder implements flushSyncWriter but discards all its input.
+type discarder struct{}
+
+func (d discarder) Write(p []byte) (int, error) {
+	return len(p), nil
+}
+
+func (d discarder) Flush() error {
+	return nil
+}
+
+func (d discarder) Sync() error {
+	return nil
+}
+
+// newDiscarders sets the log writers to discard their output and returns the old array.
+func (l *loggingT) newDiscarders() [numSeverity]flushSyncWriter {
+	d := discarder{}
+	return l.swap([numSeverity]flushSyncWriter{d, d, d, d})
+}
+
 // BenchmarkInfo benchmarks info logging
 func BenchmarkInfo(b *testing.B) {
+	setFlags()
+	logging.stderrThreshold.set(fatalLog)
+	defer logging.swap(logging.newDiscarders())
 	for i := 0; i < b.N; i++ {
 		Info("test")
 	}
@@ -446,6 +470,9 @@ func BenchmarkInfo(b *testing.B) {
 
 // BenchmarkInfo benchmarks info logging with rate limiting enabled but set to 0
 func BenchmarkInfoRateLimited(b *testing.B) {
+	setFlags()
+	logging.stderrThreshold.set(fatalLog)
+	defer logging.swap(logging.newDiscarders())
 	defaultRateLimiter := logging.rateLimiter
 	defer func() { logging.rateLimiter = defaultRateLimiter }()
 	SetRateLimit(time.Duration(0)*time.Second, 1)
