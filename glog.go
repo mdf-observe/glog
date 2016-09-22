@@ -165,9 +165,10 @@ func severityByName(s string) (severity, bool) {
 
 // OutputStats tracks the number of output lines and bytes written.
 type OutputStats struct {
-	lines            int64
-	bytes            int64
-	rateLimitedLines int64
+	lines                int64
+	bytes                int64
+	rateLimitedLines     int64
+	prevRateLimitedLines int64
 }
 
 // Lines returns the number of lines written.
@@ -183,6 +184,11 @@ func (s *OutputStats) Bytes() int64 {
 // RateLimitedLines returns the number of lines dropped due to rate limiting.
 func (s *OutputStats) RateLimitedLines() int64 {
 	return atomic.LoadInt64(&s.rateLimitedLines)
+}
+
+// PrevRateLimitedLines returns the previous number of lines dropped due to rate limiting.
+func (s *OutputStats) PrevRateLimitedLines() int64 {
+	return atomic.LoadInt64(&s.prevRateLimitedLines)
 }
 
 // Stats tracks the number of lines of output and number of bytes
@@ -676,6 +682,14 @@ func (l *loggingT) output(s severity, buf *buffer, file string, line int, alsoTo
 		if l.traceLocation.match(file, line) {
 			buf.Write(stacks(false))
 		}
+	}
+	if stats := severityStats[s]; stats != nil {
+		prev := stats.PrevRateLimitedLines()
+		curr := stats.RateLimitedLines()
+		if diff := curr - prev; diff != 0 {
+			buf.Write([]byte(fmt.Sprintf("%d messages were suppressed\n", diff)))
+		}
+		atomic.StoreInt64(&stats.prevRateLimitedLines, curr)
 	}
 	data := buf.Bytes()
 	if !flag.Parsed() {

@@ -422,18 +422,67 @@ func TestRateLimit(t *testing.T) {
 	defaultRateLimiter := logging.rateLimiter
 	defer func() { logging.rateLimiter = defaultRateLimiter }()
 	SetRateLimit(time.Duration(math.MaxInt32)*time.Second, 1)
+
 	okLog := "look at me"
 	Info(okLog)
 	count := strings.Count(contents(infoLog), okLog)
 	if count != 1 {
 		t.Errorf("Saw %q %d times (expected 1): %s", okLog, count, contents(infoLog))
 	}
+	suppressedLog := "messages were suppressed"
+	suppressedCount := strings.Count(contents(infoLog), suppressedLog)
+	if suppressedCount != 0 {
+		t.Errorf("Saw %q %d times (expected 0): %s", suppressedLog,
+			suppressedCount, contents(infoLog))
+	}
+
 	rateLimitedLog := "sorry"
 	Info(rateLimitedLog)
 	count = strings.Count(contents(infoLog), rateLimitedLog)
 	if count != 0 {
 		t.Errorf("Saw %q %d times (expected 0): %s", rateLimitedLog, count,
 			contents(infoLog))
+	}
+
+	// Reset the rate limiter
+	SetRateLimit(time.Duration(math.MaxInt32)*time.Second, 1)
+	anotherLog := "hello!"
+	Info(anotherLog)
+	count = strings.Count(contents(infoLog), anotherLog)
+	if count != 1 {
+		t.Errorf("Saw %q %d times (expected 1): %s", anotherLog, count, contents(infoLog))
+	}
+	suppressedLog = "1 " + suppressedLog
+	suppressedCount = strings.Count(contents(infoLog), suppressedLog)
+	if suppressedCount != 1 {
+		t.Errorf("Saw %q %d times (expected 1): %s", suppressedLog,
+			suppressedCount, contents(infoLog))
+	}
+
+	suppressAmount := 10
+	for i := 0; i < suppressAmount; i++ {
+		Info(rateLimitedLog)
+	}
+	count = strings.Count(contents(infoLog), rateLimitedLog)
+	if count != 0 {
+		t.Errorf("Saw %q %d times (expected 0): %s", rateLimitedLog, count,
+			contents(infoLog))
+	}
+
+	// Reset the rate limiter again
+	SetRateLimit(time.Duration(math.MaxInt32)*time.Second, 1)
+
+	anotherLog = "hello there again!"
+	Info(anotherLog)
+	count = strings.Count(contents(infoLog), anotherLog)
+	if count != 1 {
+		t.Errorf("Saw %q %d times (expected 1): %s", anotherLog, count, contents(infoLog))
+	}
+	suppressedLog = fmt.Sprintf("%d messages were suppressed", suppressAmount)
+	suppressedCount = strings.Count(contents(infoLog), suppressedLog)
+	if suppressedCount != 1 {
+		t.Errorf("Saw %q %d times (expected 1): %s", suppressedLog,
+			suppressedCount, contents(infoLog))
 	}
 }
 
