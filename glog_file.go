@@ -22,7 +22,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/user"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -43,7 +42,7 @@ var (
 	pid      = os.Getpid()
 	program  = filepath.Base(os.Args[0])
 	host     = "unknownhost"
-	userName = "unknownuser"
+	userName = os.Getenv("USER")
 )
 
 func init() {
@@ -52,9 +51,8 @@ func init() {
 		host = shortHostname(h)
 	}
 
-	current, err := user.Current()
-	if err == nil {
-		userName = current.Username
+	if userName == "" {
+		userName = "unknownuser"
 	}
 
 	// Sanitize userName since it may contain filepath separators on Windows.
