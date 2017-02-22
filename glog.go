@@ -665,7 +665,7 @@ func (l *loggingT) printWithFileLine(s severity, file string, line int, alsoToSt
 // output writes the data to the log files and releases the buffer.
 func (l *loggingT) output(s severity, buf *buffer, file string, line int, alsoToStderr bool) {
 	l.mu.Lock()
-	if l.rateLimiter != nil {
+	if s != fatalLog && l.rateLimiter != nil {
 		now := time.Now()
 		r := l.rateLimiter.ReserveN(now, 1)
 		if !r.OK() || r.DelayFrom(now) > 0 {
