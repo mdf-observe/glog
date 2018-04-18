@@ -896,7 +896,7 @@ const flushInterval = 30 * time.Second
 
 // flushDaemon periodically flushes the log file buffers.
 func (l *loggingT) flushDaemon() {
-	for _ = range time.NewTicker(flushInterval).C {
+	for range time.NewTicker(flushInterval).C {
 		l.lockAndFlushAll()
 	}
 }
@@ -1018,11 +1018,10 @@ func V(level Level) Verbose {
 	// This function tries hard to be cheap unless there's work to do.
 	// The fast path is two atomic loads and compares.
 
-	// vmodule may be set. check it first to allow for files to be excluded
-	// e.g. -vmodule=noisyfile=0,*=9
+	// vmodule may be set. check it first to allow for files to have a lower level, or
+	// even be excluded (=0).
+	// e.g. -vmodule=noisyfile=0,otherfile=3,*=9
 	//
-	// Note that this is likely disastrous for the happy path, where no logging is configured,
-	// without some further optimizations.
 	if atomic.LoadInt32(&logging.filterLength) > 0 {
 		// Now we need a proper lock to use the logging structure. The pcs field
 		// is shared so we must lock before accessing it. This is fairly expensive,
@@ -1037,8 +1036,8 @@ func V(level Level) Verbose {
 			v = logging.setV(logging.pcs[0])
 		}
 		logging.mu.Unlock()
-		if Verbose(v >= level) {
-			return Verbose(true)
+		if v != 0 { // did we match a filter pattern?
+			return Verbose(v >= level)
 		}
 	}
 	// See if V logging is enabled globally.
