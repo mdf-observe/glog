@@ -419,8 +419,7 @@ func BenchmarkHeader(b *testing.B) {
 func TestRateLimit(t *testing.T) {
 	setFlags()
 	defer logging.swap(logging.newBuffers())
-	defaultRateLimiter := logging.rateLimiter
-	defer func() { logging.rateLimiter = defaultRateLimiter }()
+	defer func() { SetRateLimit(time.Second, 100000) }()
 	SetRateLimit(time.Duration(math.MaxInt32)*time.Second, 1)
 
 	okLog := "look at me"
@@ -429,7 +428,7 @@ func TestRateLimit(t *testing.T) {
 	if count != 1 {
 		t.Errorf("Saw %q %d times (expected 1): %s", okLog, count, contents(infoLog))
 	}
-	suppressedLog := "messages were suppressed"
+	suppressedLog := "messages were lost"
 	suppressedCount := strings.Count(contents(infoLog), suppressedLog)
 	if suppressedCount != 0 {
 		t.Errorf("Saw %q %d times (expected 0): %s", suppressedLog,
@@ -478,7 +477,7 @@ func TestRateLimit(t *testing.T) {
 	if count != 1 {
 		t.Errorf("Saw %q %d times (expected 1): %s", anotherLog, count, contents(infoLog))
 	}
-	suppressedLog = fmt.Sprintf("%d messages were suppressed", suppressAmount)
+	suppressedLog = fmt.Sprintf("%d messages were lost", suppressAmount)
 	suppressedCount = strings.Count(contents(infoLog), suppressedLog)
 	if suppressedCount != 1 {
 		t.Errorf("Saw %q %d times (expected 1): %s", suppressedLog,
@@ -522,8 +521,7 @@ func BenchmarkInfoRateLimited(b *testing.B) {
 	setFlags()
 	logging.stderrThreshold.set(fatalLog)
 	defer logging.swap(logging.newDiscarders())
-	defaultRateLimiter := logging.rateLimiter
-	defer func() { logging.rateLimiter = defaultRateLimiter }()
+	defer func() { SetRateLimit(time.Second, 100000) }()
 	SetRateLimit(time.Duration(0)*time.Second, 1)
 	for i := 0; i < b.N; i++ {
 		Info("rate")
