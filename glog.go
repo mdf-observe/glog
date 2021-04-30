@@ -527,7 +527,7 @@ where the fields are defined as follows:
 	dd               The day (zero padded)
 	hh:mm:ss.uuuuuu  Time in hours, minutes and fractional seconds
 	threadid         The space-padded thread ID as returned by GetTID()
-	file             The file name
+	file             The parent dir and basename
 	line             The line number
 	msg              The user-supplied message
 */
@@ -537,10 +537,15 @@ func (l *loggingT) header(s severity, depth int) (*buffer, string, int) {
 		file = "???"
 		line = 1
 	} else {
-		slash := strings.LastIndex(file, "/")
-		if slash >= 0 {
-			file = file[slash+1:]
+		var prev int
+		last := -1
+		for i, c := range file {
+			if c == '/' {
+				prev = last + 1
+				last = i
+			}
 		}
+		file = file[prev:]
 	}
 	return l.formatHeader(s, file, line), file, line
 }
