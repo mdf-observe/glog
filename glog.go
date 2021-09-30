@@ -1017,7 +1017,10 @@ func testAndRateLimitLogLevel(l Level) bool {
 		return false
 	}
 	if s := severityStats[infoLog]; s != nil {
-		atomic.AddInt64(&s.rateLimitedLines, 1)
+		if (atomic.AddInt64(&s.rateLimitedLines, 1) & 63) == 63 {
+			//	haha just kidding, letting this one through anyway
+			return false
+		}
 	}
 	return true
 }
@@ -1116,9 +1119,13 @@ func (v Verbose) Infof(format string, args ...interface{}) {
 func Info(args ...interface{}) {
 	if severityRateLimiters[infoLog].shouldRateLimit() {
 		if s := severityStats[infoLog]; s != nil {
-			atomic.AddInt64(&s.rateLimitedLines, 1)
+			if (atomic.AddInt64(&s.rateLimitedLines, 1) & 63) != 63 {
+				return
+			}
+			//	haha just kidding, letting this one through anyway
+		} else {
+			return
 		}
-		return
 	}
 	logging.print(infoLog, args...)
 }
@@ -1128,9 +1135,13 @@ func Info(args ...interface{}) {
 func InfoDepth(depth int, args ...interface{}) {
 	if severityRateLimiters[infoLog].shouldRateLimit() {
 		if s := severityStats[infoLog]; s != nil {
-			atomic.AddInt64(&s.rateLimitedLines, 1)
+			if (atomic.AddInt64(&s.rateLimitedLines, 1) & 63) != 63 {
+				return
+			}
+			//	haha just kidding, letting this one through anyway
+		} else {
+			return
 		}
-		return
 	}
 	logging.printDepth(infoLog, depth, args...)
 }
@@ -1140,9 +1151,13 @@ func InfoDepth(depth int, args ...interface{}) {
 func Infoln(args ...interface{}) {
 	if severityRateLimiters[infoLog].shouldRateLimit() {
 		if s := severityStats[infoLog]; s != nil {
-			atomic.AddInt64(&s.rateLimitedLines, 1)
+			if (atomic.AddInt64(&s.rateLimitedLines, 1) & 63) != 63 {
+				return
+			}
+			//	haha just kidding, letting this one through anyway
+		} else {
+			return
 		}
-		return
 	}
 	logging.println(infoLog, args...)
 }
@@ -1152,9 +1167,13 @@ func Infoln(args ...interface{}) {
 func Infof(format string, args ...interface{}) {
 	if severityRateLimiters[infoLog].shouldRateLimit() {
 		if s := severityStats[infoLog]; s != nil {
-			atomic.AddInt64(&s.rateLimitedLines, 1)
+			if (atomic.AddInt64(&s.rateLimitedLines, 1) & 63) != 63 {
+				return
+			}
+			//	haha just kidding, letting this one through anyway
+		} else {
+			return
 		}
-		return
 	}
 	logging.printf(infoLog, format, args...)
 }
@@ -1163,10 +1182,14 @@ func Infof(format string, args ...interface{}) {
 // Arguments are handled in the manner of fmt.Print; a newline is appended if missing.
 func Warning(args ...interface{}) {
 	if severityRateLimiters[warningLog].shouldRateLimit() {
-		if s := severityStats[warningLog]; s != nil {
-			atomic.AddInt64(&s.rateLimitedLines, 1)
+		if s := severityStats[infoLog]; s != nil {
+			if (atomic.AddInt64(&s.rateLimitedLines, 1) & 63) != 63 {
+				return
+			}
+			//	haha just kidding, letting this one through anyway
+		} else {
+			return
 		}
-		return
 	}
 	logging.print(warningLog, args...)
 }
@@ -1175,10 +1198,14 @@ func Warning(args ...interface{}) {
 // WarningDepth(0, "msg") is the same as Warning("msg").
 func WarningDepth(depth int, args ...interface{}) {
 	if severityRateLimiters[warningLog].shouldRateLimit() {
-		if s := severityStats[warningLog]; s != nil {
-			atomic.AddInt64(&s.rateLimitedLines, 1)
+		if s := severityStats[infoLog]; s != nil {
+			if (atomic.AddInt64(&s.rateLimitedLines, 1) & 63) != 63 {
+				return
+			}
+			//	haha just kidding, letting this one through anyway
+		} else {
+			return
 		}
-		return
 	}
 	logging.printDepth(warningLog, depth, args...)
 }
@@ -1187,10 +1214,14 @@ func WarningDepth(depth int, args ...interface{}) {
 // Arguments are handled in the manner of fmt.Println; a newline is appended if missing.
 func Warningln(args ...interface{}) {
 	if severityRateLimiters[warningLog].shouldRateLimit() {
-		if s := severityStats[warningLog]; s != nil {
-			atomic.AddInt64(&s.rateLimitedLines, 1)
+		if s := severityStats[infoLog]; s != nil {
+			if (atomic.AddInt64(&s.rateLimitedLines, 1) & 63) != 63 {
+				return
+			}
+			//	haha just kidding, letting this one through anyway
+		} else {
+			return
 		}
-		return
 	}
 	logging.println(warningLog, args...)
 }
@@ -1199,10 +1230,14 @@ func Warningln(args ...interface{}) {
 // Arguments are handled in the manner of fmt.Printf; a newline is appended if missing.
 func Warningf(format string, args ...interface{}) {
 	if severityRateLimiters[warningLog].shouldRateLimit() {
-		if s := severityStats[warningLog]; s != nil {
-			atomic.AddInt64(&s.rateLimitedLines, 1)
+		if s := severityStats[infoLog]; s != nil {
+			if (atomic.AddInt64(&s.rateLimitedLines, 1) & 63) != 63 {
+				return
+			}
+			//	haha just kidding, letting this one through anyway
+		} else {
+			return
 		}
-		return
 	}
 	logging.printf(warningLog, format, args...)
 }
@@ -1211,10 +1246,14 @@ func Warningf(format string, args ...interface{}) {
 // Arguments are handled in the manner of fmt.Print; a newline is appended if missing.
 func Error(args ...interface{}) {
 	if severityRateLimiters[errorLog].shouldRateLimit() {
-		if s := severityStats[errorLog]; s != nil {
-			atomic.AddInt64(&s.rateLimitedLines, 1)
+		if s := severityStats[infoLog]; s != nil {
+			if (atomic.AddInt64(&s.rateLimitedLines, 1) & 63) != 63 {
+				return
+			}
+			//	haha just kidding, letting this one through anyway
+		} else {
+			return
 		}
-		return
 	}
 	logging.print(errorLog, args...)
 }
@@ -1223,10 +1262,14 @@ func Error(args ...interface{}) {
 // ErrorDepth(0, "msg") is the same as Error("msg"). Use when wrapping Error()
 func ErrorDepth(depth int, args ...interface{}) {
 	if severityRateLimiters[errorLog].shouldRateLimit() {
-		if s := severityStats[errorLog]; s != nil {
-			atomic.AddInt64(&s.rateLimitedLines, 1)
+		if s := severityStats[infoLog]; s != nil {
+			if (atomic.AddInt64(&s.rateLimitedLines, 1) & 63) != 63 {
+				return
+			}
+			//	haha just kidding, letting this one through anyway
+		} else {
+			return
 		}
-		return
 	}
 	logging.printDepth(errorLog, depth, args...)
 }
@@ -1235,10 +1278,14 @@ func ErrorDepth(depth int, args ...interface{}) {
 // Arguments are handled in the manner of fmt.Println; a newline is appended if missing.
 func Errorln(args ...interface{}) {
 	if severityRateLimiters[errorLog].shouldRateLimit() {
-		if s := severityStats[errorLog]; s != nil {
-			atomic.AddInt64(&s.rateLimitedLines, 1)
+		if s := severityStats[infoLog]; s != nil {
+			if (atomic.AddInt64(&s.rateLimitedLines, 1) & 63) != 63 {
+				return
+			}
+			//	haha just kidding, letting this one through anyway
+		} else {
+			return
 		}
-		return
 	}
 	logging.println(errorLog, args...)
 }
@@ -1247,10 +1294,14 @@ func Errorln(args ...interface{}) {
 // Arguments are handled in the manner of fmt.Printf; a newline is appended if missing.
 func Errorf(format string, args ...interface{}) {
 	if severityRateLimiters[errorLog].shouldRateLimit() {
-		if s := severityStats[errorLog]; s != nil {
-			atomic.AddInt64(&s.rateLimitedLines, 1)
+		if s := severityStats[infoLog]; s != nil {
+			if (atomic.AddInt64(&s.rateLimitedLines, 1) & 63) != 63 {
+				return
+			}
+			//	haha just kidding, letting this one through anyway
+		} else {
+			return
 		}
-		return
 	}
 	logging.printf(errorLog, format, args...)
 }
