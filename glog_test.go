@@ -20,7 +20,6 @@ import (
 	"bytes"
 	"fmt"
 	stdLog "log"
-	"math"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -420,7 +419,14 @@ func TestRateLimit(t *testing.T) {
 	setFlags()
 	defer logging.swap(logging.newBuffers())
 	defer func() { SetRateLimit(time.Second, 100000) }()
-	SetRateLimit(time.Duration(math.MaxInt32)*time.Second, 1)
+
+	np := time.Now()
+	now := &np
+	timeNow = func() time.Time { return *now }
+	defer func() { timeNow = time.Now }()
+
+	const kInterval time.Duration = time.Minute
+	SetRateLimit(kInterval, 1)
 
 	okLog := "look at me"
 	Info(okLog)
@@ -444,7 +450,7 @@ func TestRateLimit(t *testing.T) {
 	}
 
 	// Reset the rate limiter
-	SetRateLimit(time.Duration(math.MaxInt32)*time.Second, 1)
+	np = np.Add(kInterval)
 	anotherLog := "hello!"
 	Info(anotherLog)
 	count = strings.Count(contents(infoLog), anotherLog)
@@ -469,7 +475,7 @@ func TestRateLimit(t *testing.T) {
 	}
 
 	// Reset the rate limiter again
-	SetRateLimit(time.Duration(math.MaxInt32)*time.Second, 1)
+	np = np.Add(kInterval)
 
 	anotherLog = "hello there again!"
 	Info(anotherLog)
