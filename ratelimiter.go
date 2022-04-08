@@ -6,67 +6,95 @@ import (
 	"time"
 )
 
-//	This log rate limiter doesn't use locking on the regular path,
-//	but instead only does housekeeping every "burst" log lines.
-type logRateLimiter struct {
-	lastCount    int64
-	burstSize    int64
-	lastTime     time.Time
-	timeInterval time.Duration
-	lock         sync.Mutex
+// The RateLimiter limiter is lock-free except when transitioning from throttled to unthrottled.
+type RateLimiter struct {
+	burstCount         int64
+	burstIntervalNanos int64
+	count              int64
+	unixNanos          int64
+	lock               sync.Mutex
+	onRelease          func(missed int)
 }
 
-//
-func (l *logRateLimiter) shouldRateLimit() bool {
-	count := atomic.AddInt64(&l.lastCount, 1)
-	if count > l.burstSize {
-		l.lock.Lock()
-		defer l.lock.Unlock()
-		//	re-load, because we may have raced with someone else
-		count = atomic.LoadInt64(&l.lastCount)
-		if count > l.burstSize {
-			now := timeNow()
-			since := now.Sub(l.lastTime)
-			//	This relies on integer division truncating down
-			n := int64(since) * int64(l.burstSize) / int64(l.timeInterval)
-			if n <= 0 { // rate limited!
-				//	I didn't print anything
-				atomic.AddInt64(&l.lastCount, -1)
-				return true
-			}
-			if n >= count {
-				count = 1
-				l.lastTime = now
-			} else {
-				//	I logged -- so don't delete that
-				count -= (n - 1)
-				plusDelta := time.Duration(n * int64(l.timeInterval) / l.burstSize)
-				l.lastTime = l.lastTime.Add(plusDelta)
-			}
-			atomic.StoreInt64(&l.lastCount, count)
+func (r *RateLimiter) Allowed() bool {
+	count := atomic.AddInt64(&r.count, 1)
+	if count <= r.burstCount {
+		return true
+	}
+
+	// We didn't pass the fast check, so we have to check more.
+	now64 := timeNow().UnixNano()
+	ts := atomic.LoadInt64(&r.unixNanos)
+
+	// We could assume that a time.Duration is an int64 nanosecond count and do all arithmetic
+	// in int64 nanos; this would likely be notably faster.
+	delta := now64 - ts
+	if delta < r.burstIntervalNanos {
+		return false
+	}
+
+	// It's possible to do this lock-free, but this path is rare enough it shouldn't matter.
+	r.lock.Lock()
+	defer r.lock.Unlock()
+
+	// We can allow the event, and so can anyone checking "after" us.  We may race with other
+	// threads in resetting the count.  We must reset the count first -- otherwise, if a thread
+	// came in between our update to the timestamp and then the count would see that the count
+	// is too high and also that not enough time has elapsed.  I.e. we would incorrectly
+	// throttle a use.
+	//
+	// Once the count is reset, new items will immediately be allowed until the threshold is
+	// reached again.  If this thread hasn't yet reset the timestamp, another thread may also
+	// decide to reset the timestamp.  This may allow too many items, depending on update
+	// order, but that seems better than incorrectly throttling, especially since it's less
+	// likely that concurrent threads do an allowed() check while we haven't yet updated the
+	// timestamp.
+
+	if atomic.LoadInt64(&r.count) >= r.burstCount {
+		// We still look like we're over the count, and since we're under the lock, it's our
+		// job to reset it.  No one else will decrease it.
+		oldCount := atomic.SwapInt64(&r.count, 1 /* for ourself */)
+
+		// Note that in theory we could race with other setters, who already reset the count
+		// and timestamp, then the count re-exceeded the threshhold, then we got the lock.  So
+		// make sure r.unixNanos always increases.
+		oldUnix64 := atomic.LoadInt64(&r.unixNanos)
+		if now64 > oldUnix64 {
+			atomic.CompareAndSwapInt64(&r.unixNanos, oldUnix64, now64)
+		}
+
+		// Subtract 1 because the initial check at the top of the function added 1 that we
+		// didn't actually end up throttling.
+		if missed := oldCount - r.burstCount - 1; missed > 0 {
+			r.onRelease(int(missed))
 		}
 	}
-	return false
+
+	return true
 }
 
-func newRateLimiter(timeInterval time.Duration, burst int) *logRateLimiter {
+func NewRateLimiter(timeInterval time.Duration, burst int, onRelease func(missed int)) *RateLimiter {
 	if timeInterval < 1 {
 		timeInterval = time.Nanosecond
 	}
 	if burst < 1 {
 		burst = 1
 	}
-	return &logRateLimiter{
-		burstSize:    int64(burst),
-		lastTime:     timeNow(),
-		timeInterval: timeInterval,
+	return &RateLimiter{
+		burstCount:         int64(burst),
+		burstIntervalNanos: int64(timeInterval),
+		count:              0,
+		unixNanos:          timeNow().UnixNano(),
+		onRelease:          onRelease,
 	}
 }
 
-func newInfiniteRateLimiter() *logRateLimiter {
-	return &logRateLimiter{
-		lastTime:     timeNow(),
-		burstSize:    0x100000000000000,
-		timeInterval: time.Nanosecond,
+func newInfiniteRateLimiter(onRelease func(missed int)) *RateLimiter {
+	return &RateLimiter{
+		burstCount:         0x100000000000000,
+		burstIntervalNanos: int64(time.Nanosecond),
+		count:              0,
+		unixNanos:          timeNow().UnixNano(),
+		onRelease:          onRelease,
 	}
 }

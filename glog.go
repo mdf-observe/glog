@@ -163,10 +163,8 @@ func severityByName(s string) (severity, bool) {
 
 // OutputStats tracks the number of output lines and bytes written.
 type OutputStats struct {
-	lines                int64
-	bytes                int64
-	rateLimitedLines     int64
-	prevRateLimitedLines int64
+	lines int64
+	bytes int64
 }
 
 // Lines returns the number of lines written.
@@ -177,16 +175,6 @@ func (s *OutputStats) Lines() int64 {
 // Bytes returns the number of bytes written.
 func (s *OutputStats) Bytes() int64 {
 	return atomic.LoadInt64(&s.bytes)
-}
-
-// RateLimitedLines returns the number of lines dropped due to rate limiting.
-func (s *OutputStats) RateLimitedLines() int64 {
-	return atomic.LoadInt64(&s.rateLimitedLines)
-}
-
-// PrevRateLimitedLines returns the previous number of lines dropped due to rate limiting.
-func (s *OutputStats) PrevRateLimitedLines() int64 {
-	return atomic.LoadInt64(&s.prevRateLimitedLines)
 }
 
 // Stats tracks the number of lines of output and number of bytes
@@ -679,16 +667,6 @@ func (l *loggingT) output(s severity, buf *buffer, file string, line int, alsoTo
 			buf.Write(stacks(false))
 		}
 	}
-	if stats := severityStats[s]; stats != nil {
-		prev := stats.PrevRateLimitedLines()
-		curr := stats.RateLimitedLines()
-		if diff := curr - prev; diff != 0 {
-			//	Make sure the message doesn't look too similar to the syslog message for
-			//	suppressing identical messages.
-			buf.Write([]byte(fmt.Sprintf("%d messages were lost due to rate limiting\n", diff)))
-		}
-		atomic.StoreInt64(&stats.prevRateLimitedLines, curr)
-	}
 	data := buf.Bytes()
 	if !flag.Parsed() {
 		os.Stderr.Write([]byte("ERROR: logging before flag.Parse: "))
@@ -993,42 +971,35 @@ func (l *loggingT) setV(pc uintptr) Level {
 	return 0
 }
 
+func onLogLimitReset(missed int) {
+	// Make sure the message doesn't look too similar to the syslog message for
+	// suppressing identical messages.
+	logging.print(infoLog, fmt.Sprintf("%d messages were lost due to rate limiting\n", missed))
+}
+
 //	Rate limiting must be per log level, because otherwise we will swallow
 //	important logs because of less important logs.
 
-//	Need a lock-free rate limiter per log level to propery account for
+//	Need a lock-free rate limiter per log level to properly account for
 //	higher verbosity not killing important log events. Set the default
 //	limit at something large to reduce overhead by default.
-var levelRateLimiters = [10]*logRateLimiter{
-	newInfiniteRateLimiter(),
-	newInfiniteRateLimiter(),
-	newInfiniteRateLimiter(),
-	newInfiniteRateLimiter(),
-	newInfiniteRateLimiter(),
-	newInfiniteRateLimiter(),
-	newInfiniteRateLimiter(),
-	newInfiniteRateLimiter(),
-	newInfiniteRateLimiter(),
-	newInfiniteRateLimiter(),
+var levelRateLimiters = [10]*RateLimiter{
+	newInfiniteRateLimiter(onLogLimitReset),
+	newInfiniteRateLimiter(onLogLimitReset),
+	newInfiniteRateLimiter(onLogLimitReset),
+	newInfiniteRateLimiter(onLogLimitReset),
+	newInfiniteRateLimiter(onLogLimitReset),
+	newInfiniteRateLimiter(onLogLimitReset),
+	newInfiniteRateLimiter(onLogLimitReset),
+	newInfiniteRateLimiter(onLogLimitReset),
+	newInfiniteRateLimiter(onLogLimitReset),
+	newInfiniteRateLimiter(onLogLimitReset),
 }
 
-func testAndRateLimitLogLevel(l Level) bool {
-	if !levelRateLimiters[l].shouldRateLimit() {
-		return false
-	}
-	if s := severityStats[infoLog]; s != nil {
-		if (atomic.AddInt64(&s.rateLimitedLines, 1) & 63) == 63 {
-			//	haha just kidding, letting this one through anyway
-			return false
-		}
-	}
-	return true
-}
-
-var severityRateLimiters = [3]*logRateLimiter{
-	infoLog:    newInfiniteRateLimiter(),
-	warningLog: newInfiniteRateLimiter(),
-	errorLog:   newInfiniteRateLimiter(),
+var severityRateLimiters = [3]*RateLimiter{
+	infoLog:    newInfiniteRateLimiter(onLogLimitReset),
+	warningLog: newInfiniteRateLimiter(onLogLimitReset),
+	errorLog:   newInfiniteRateLimiter(onLogLimitReset),
 }
 
 // Verbose is a boolean type that implements Infof (like Printf) etc.
@@ -1052,13 +1023,12 @@ type Verbose bool
 func V(level Level) Verbose {
 	// This function tries hard to be cheap unless there's work to do.
 	// The fast path is two atomic loads and compares.
+	var rateLimiter *RateLimiter
 
 	if level > 9 || level < 0 {
-		if testAndRateLimitLogLevel(9) {
-			return Verbose(false)
-		}
-	} else if testAndRateLimitLogLevel(level) {
-		return Verbose(false)
+		rateLimiter = levelRateLimiters[9]
+	} else {
+		rateLimiter = levelRateLimiters[level]
 	}
 
 	// vmodule may be set. check it first to allow for files to have a lower level, or
@@ -1080,14 +1050,15 @@ func V(level Level) Verbose {
 		}
 		logging.mu.Unlock()
 		if v != 0 { // did we match a filter pattern?
-			return Verbose(v >= level)
+			return Verbose(v >= level && rateLimiter.Allowed())
 		}
 	}
 	// See if V logging is enabled globally.
-	if logging.verbosity.get() >= level {
-		return Verbose(true)
-	}
-	return Verbose(false)
+	//
+	// TODO: note that this checks the rate-limiter once per V() call, not once per use of the
+	// verbosity.  Since golang doesn't allow implicit conversion to bool from arbitrary type,
+	// there's no way to preserve all the `if V(3) { ... }` code without making the check once.
+	return Verbose(logging.verbosity.get() >= level && rateLimiter.Allowed())
 }
 
 // Info is equivalent to the global Info function, guarded by the value of v.
@@ -1117,193 +1088,97 @@ func (v Verbose) Infof(format string, args ...interface{}) {
 // Info logs informational messages.
 // Arguments are handled in the manner of fmt.Print; a newline is appended if missing.
 func Info(args ...interface{}) {
-	if severityRateLimiters[infoLog].shouldRateLimit() {
-		if s := severityStats[infoLog]; s != nil {
-			if (atomic.AddInt64(&s.rateLimitedLines, 1) & 63) != 63 {
-				return
-			}
-			//	haha just kidding, letting this one through anyway
-		} else {
-			return
-		}
+	if severityRateLimiters[infoLog].Allowed() {
+		logging.print(infoLog, args...)
 	}
-	logging.print(infoLog, args...)
 }
 
 // InfoDepth acts as Info but uses depth to determine which call frame to log.
 // InfoDepth(0, "msg") is the same as Info("msg"). Use when wrapping Info()
 func InfoDepth(depth int, args ...interface{}) {
-	if severityRateLimiters[infoLog].shouldRateLimit() {
-		if s := severityStats[infoLog]; s != nil {
-			if (atomic.AddInt64(&s.rateLimitedLines, 1) & 63) != 63 {
-				return
-			}
-			//	haha just kidding, letting this one through anyway
-		} else {
-			return
-		}
+	if severityRateLimiters[infoLog].Allowed() {
+		logging.printDepth(infoLog, depth, args...)
 	}
-	logging.printDepth(infoLog, depth, args...)
 }
 
 // Infoln logs informational messages.
 // See the documentation of V for usage.
 func Infoln(args ...interface{}) {
-	if severityRateLimiters[infoLog].shouldRateLimit() {
-		if s := severityStats[infoLog]; s != nil {
-			if (atomic.AddInt64(&s.rateLimitedLines, 1) & 63) != 63 {
-				return
-			}
-			//	haha just kidding, letting this one through anyway
-		} else {
-			return
-		}
+	if severityRateLimiters[infoLog].Allowed() {
+		logging.println(infoLog, args...)
 	}
-	logging.println(infoLog, args...)
 }
 
 // Infof logs informational messages.
 // Arguments are handled in the manner of fmt.Printf; a newline is appended if missing.
 func Infof(format string, args ...interface{}) {
-	if severityRateLimiters[infoLog].shouldRateLimit() {
-		if s := severityStats[infoLog]; s != nil {
-			if (atomic.AddInt64(&s.rateLimitedLines, 1) & 63) != 63 {
-				return
-			}
-			//	haha just kidding, letting this one through anyway
-		} else {
-			return
-		}
+	if severityRateLimiters[infoLog].Allowed() {
+		logging.printf(infoLog, format, args...)
 	}
-	logging.printf(infoLog, format, args...)
 }
 
 // Warning logs to the WARNING and INFO logs.
 // Arguments are handled in the manner of fmt.Print; a newline is appended if missing.
 func Warning(args ...interface{}) {
-	if severityRateLimiters[warningLog].shouldRateLimit() {
-		if s := severityStats[infoLog]; s != nil {
-			if (atomic.AddInt64(&s.rateLimitedLines, 1) & 63) != 63 {
-				return
-			}
-			//	haha just kidding, letting this one through anyway
-		} else {
-			return
-		}
+	if severityRateLimiters[warningLog].Allowed() {
+		logging.print(warningLog, args...)
 	}
-	logging.print(warningLog, args...)
 }
 
 // WarningDepth acts as Warning but uses depth to determine which call frame to log.
 // WarningDepth(0, "msg") is the same as Warning("msg").
 func WarningDepth(depth int, args ...interface{}) {
-	if severityRateLimiters[warningLog].shouldRateLimit() {
-		if s := severityStats[infoLog]; s != nil {
-			if (atomic.AddInt64(&s.rateLimitedLines, 1) & 63) != 63 {
-				return
-			}
-			//	haha just kidding, letting this one through anyway
-		} else {
-			return
-		}
+	if severityRateLimiters[warningLog].Allowed() {
+		logging.printDepth(warningLog, depth, args...)
 	}
-	logging.printDepth(warningLog, depth, args...)
 }
 
 // Warningln logs to the WARNING and INFO logs.
 // Arguments are handled in the manner of fmt.Println; a newline is appended if missing.
 func Warningln(args ...interface{}) {
-	if severityRateLimiters[warningLog].shouldRateLimit() {
-		if s := severityStats[infoLog]; s != nil {
-			if (atomic.AddInt64(&s.rateLimitedLines, 1) & 63) != 63 {
-				return
-			}
-			//	haha just kidding, letting this one through anyway
-		} else {
-			return
-		}
+	if severityRateLimiters[warningLog].Allowed() {
+		logging.println(warningLog, args...)
 	}
-	logging.println(warningLog, args...)
 }
 
 // Warningf logs to the WARNING and INFO logs.
 // Arguments are handled in the manner of fmt.Printf; a newline is appended if missing.
 func Warningf(format string, args ...interface{}) {
-	if severityRateLimiters[warningLog].shouldRateLimit() {
-		if s := severityStats[infoLog]; s != nil {
-			if (atomic.AddInt64(&s.rateLimitedLines, 1) & 63) != 63 {
-				return
-			}
-			//	haha just kidding, letting this one through anyway
-		} else {
-			return
-		}
+	if severityRateLimiters[warningLog].Allowed() {
+		logging.printf(warningLog, format, args...)
 	}
-	logging.printf(warningLog, format, args...)
 }
 
 // Error logs to the ERROR, WARNING, and INFO logs.
 // Arguments are handled in the manner of fmt.Print; a newline is appended if missing.
 func Error(args ...interface{}) {
-	if severityRateLimiters[errorLog].shouldRateLimit() {
-		if s := severityStats[infoLog]; s != nil {
-			if (atomic.AddInt64(&s.rateLimitedLines, 1) & 63) != 63 {
-				return
-			}
-			//	haha just kidding, letting this one through anyway
-		} else {
-			return
-		}
+	if severityRateLimiters[errorLog].Allowed() {
+		logging.print(errorLog, args...)
 	}
-	logging.print(errorLog, args...)
 }
 
 // ErrorDepth acts as Error but uses depth to determine which call frame to log.
 // ErrorDepth(0, "msg") is the same as Error("msg"). Use when wrapping Error()
 func ErrorDepth(depth int, args ...interface{}) {
-	if severityRateLimiters[errorLog].shouldRateLimit() {
-		if s := severityStats[infoLog]; s != nil {
-			if (atomic.AddInt64(&s.rateLimitedLines, 1) & 63) != 63 {
-				return
-			}
-			//	haha just kidding, letting this one through anyway
-		} else {
-			return
-		}
+	if severityRateLimiters[errorLog].Allowed() {
+		logging.printDepth(errorLog, depth, args...)
 	}
-	logging.printDepth(errorLog, depth, args...)
 }
 
 // Errorln logs error messages.
 // Arguments are handled in the manner of fmt.Println; a newline is appended if missing.
 func Errorln(args ...interface{}) {
-	if severityRateLimiters[errorLog].shouldRateLimit() {
-		if s := severityStats[infoLog]; s != nil {
-			if (atomic.AddInt64(&s.rateLimitedLines, 1) & 63) != 63 {
-				return
-			}
-			//	haha just kidding, letting this one through anyway
-		} else {
-			return
-		}
+	if severityRateLimiters[errorLog].Allowed() {
+		logging.println(errorLog, args...)
 	}
-	logging.println(errorLog, args...)
 }
 
 // Errorf logs error messages.
 // Arguments are handled in the manner of fmt.Printf; a newline is appended if missing.
 func Errorf(format string, args ...interface{}) {
-	if severityRateLimiters[errorLog].shouldRateLimit() {
-		if s := severityStats[infoLog]; s != nil {
-			if (atomic.AddInt64(&s.rateLimitedLines, 1) & 63) != 63 {
-				return
-			}
-			//	haha just kidding, letting this one through anyway
-		} else {
-			return
-		}
+	if severityRateLimiters[errorLog].Allowed() {
+		logging.printf(errorLog, format, args...)
 	}
-	logging.printf(errorLog, format, args...)
 }
 
 // Fatal logs fatal messages,
@@ -1370,10 +1245,10 @@ func Exitf(format string, args ...interface{}) {
 func SetRateLimit(limit time.Duration, burst int) {
 	logging.mu.Lock()
 	for i := range levelRateLimiters {
-		levelRateLimiters[i] = newRateLimiter(limit, burst)
+		levelRateLimiters[i] = NewRateLimiter(limit, burst, onLogLimitReset)
 	}
 	for i := range severityRateLimiters {
-		severityRateLimiters[i] = newRateLimiter(limit, burst)
+		severityRateLimiters[i] = NewRateLimiter(limit, burst, onLogLimitReset)
 	}
 	logging.mu.Unlock()
 }
