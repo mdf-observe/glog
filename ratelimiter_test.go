@@ -1,7 +1,8 @@
 package glog
 
 import (
-	"sync"
+	"fmt"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -45,20 +46,66 @@ func TestRateLimiterLimits(t *testing.T) {
 	}
 }
 
+func checkAllowedLoop(rl *RateLimiter, loops int) error {
+	for i := 0; i < loops; i++ {
+		if !rl.Allowed() {
+			return fmt.Errorf("rl.shouldRateLimit() should never return true")
+		}
+	}
+	return nil
+}
+
 func TestInifiniteRateLimiterDoesntRateLimit(t *testing.T) {
+	const nParallel int = 16
+
 	rl := newInfiniteRateLimiter(func(int) {})
-	wg := sync.WaitGroup{}
-	for n := 0; n != 16; n++ {
-		wg.Add(1)
+	errs := make(chan error, nParallel)
+
+	for n := 0; n < nParallel; n++ {
 		go func() {
-			defer wg.Done()
 			//	can't spend TOO long running this test, but do it enough that it matters
-			for i := 0; i != 500000; i++ {
-				if !rl.Allowed() {
-					t.Fatal("rl.shouldRateLimit() should never return true for an infinite rate limiter!")
-				}
-			}
+			err := checkAllowedLoop(rl, 500000)
+			errs <- err
 		}()
 	}
-	wg.Wait()
+
+	// Wait for all to finish
+	for n := 0; n < nParallel; n++ {
+		err := <-errs
+		if err != nil {
+			t.Error(err)
+		}
+	}
+}
+
+// If we allow 5 items per nanosecond, we shouldn't actually ever see something be limited.
+func TestParallelRateLimiterDoesntRateLimit(t *testing.T) {
+	const burst int = 5
+	const timeIval time.Duration = time.Nanosecond
+	const nParallel int = 16
+
+	var missed int64
+	rl := NewRateLimiter(timeIval, burst, func(miss int) {
+		atomic.AddInt64(&missed, int64(miss))
+	})
+	errs := make(chan error, nParallel)
+
+	for n := 0; n < nParallel; n++ {
+		go func() {
+			// We can't spend TOO long running this test, but do it enough that it matters.
+			err := checkAllowedLoop(rl, 500000)
+			errs <- err
+		}()
+	}
+
+	// Wait for all to finish
+	for n := 0; n < nParallel; n++ {
+		err := <-errs
+		if err != nil {
+			t.Error(err)
+		}
+	}
+	if missed > 0 {
+		t.Fatalf("Should never drop a line: missed=%d", missed)
+	}
 }
